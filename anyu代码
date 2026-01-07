@@ -59,6 +59,80 @@ plt.tight_layout()
 plt.savefig("traffic_intensity_inner_london_all_links.png", dpi=200)
 plt.show()
 
-print("Saved:")
-print("- inner_london_aadf_all_links_annual_2013_2025.csv")
-print("- traffic_intensity_inner_london_all_links.png")
+
+
+
+
+
+
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# 1) Load data
+PATH = "air-quality-london-monthly-averages.csv"
+df = pd.read_csv(PATH)
+
+# 2) Parse dates
+# Assumes Month column looks like "Jan-13", "Feb-13", etc.
+df["Month"] = pd.to_datetime(df["Month"], format="%b-%y", errors="coerce")
+df = df.dropna(subset=["Month"]).copy()
+df["Year"] = df["Month"].dt.year
+
+# 3) Columns
+COLS = {
+    "NO2_Background": "London Mean Background:Nitrogen Dioxide (ug/m3)",
+    "PM25_Background": "London Mean Background:PM2.5 Particulate (ug/m3)",
+    "NO2_Roadside": "London Mean Roadside:Nitrogen Dioxide (ug/m3)",
+    "PM25_Roadside": "London Mean Roadside:PM2.5 Particulate (ug/m3)",
+}
+
+missing = [v for v in COLS.values() if v not in df.columns]
+if missing:
+    raise ValueError(
+        "Missing expected columns:\n"
+        + "\n".join(missing)
+        + "\n\nAvailable columns:\n"
+        + "\n".join(df.columns)
+    )
+
+# Ensure numeric
+for new_name, old_name in COLS.items():
+    df[new_name] = pd.to_numeric(df[old_name], errors="coerce")
+
+# 4) Compute annual means
+annual = (
+    df.groupby("Year")[list(COLS.keys())]
+      .mean(numeric_only=True)
+      .reset_index()
+      .sort_values("Year")
+)
+
+annual = annual[(annual["Year"] >= 2013) & (annual["Year"] <= 2025)].copy()
+
+annual.to_csv("london_annual_means_no2_pm25_2013_2025.csv", index=False)
+
+# 5) Plot: Background
+plt.figure()
+plt.plot(annual["Year"], annual["NO2_Background"], label="NO₂ (Background)")
+plt.plot(annual["Year"], annual["PM25_Background"], label="PM₂.₅ (Background)")
+plt.xlabel("Year")
+plt.ylabel("Annual mean concentration (µg/m³)")
+plt.title("London Air Quality (Annual Means) — Background")
+plt.legend()
+plt.tight_layout()
+plt.savefig("london_annual_bg_no2_pm25_2013_2025.png", dpi=200)
+plt.show()
+
+# 6) Plot: Roadside
+plt.figure()
+plt.plot(annual["Year"], annual["NO2_Roadside"], label="NO₂ (Roadside)")
+plt.plot(annual["Year"], annual["PM25_Roadside"], label="PM₂.₅ (Roadside)")
+plt.xlabel("Year")
+plt.ylabel("Annual mean concentration (µg/m³)")
+plt.title("London Air Quality (Annual Means) — Roadside")
+plt.legend()
+plt.tight_layout()
+plt.savefig("london_annual_roadside_no2_pm25_2013_2025.png", dpi=200)
+plt.show()

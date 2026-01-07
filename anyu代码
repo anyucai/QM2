@@ -1,0 +1,64 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Inner London AADF (ALL links)
+
+# 1) DfT AADF road-link dataset
+PATH = "dft_aadf_region_id_6.csv"
+df = pd.read_csv(PATH)
+
+# 2) Basic cleaning: ensure numeric types
+df["year"] = pd.to_numeric(df["year"], errors="coerce")
+df["all_motor_vehicles"] = pd.to_numeric(df["all_motor_vehicles"], errors="coerce")
+
+# Drop rows missing year or AADF
+df = df.dropna(subset=["year", "all_motor_vehicles"]).copy()
+df["year"] = df["year"].astype(int)
+
+# 3) Define Inner London boroughs (common definition)
+INNER_LONDON = {
+    "Camden", "Greenwich", "Hackney", "Hammersmith and Fulham", "Islington",
+    "Kensington and Chelsea", "Lambeth", "Lewisham", "Southwark", "Tower Hamlets",
+    "Wandsworth", "Westminster", "City of London"
+}
+
+# 4) Filter to Inner London
+BOROUGH_COL = "local_authority_name"
+if BOROUGH_COL not in df.columns:
+    raise KeyError(
+        f"Expected column '{BOROUGH_COL}' not found. "
+        f"Available columns: {list(df.columns)}"
+    )
+
+inner = df[df[BOROUGH_COL].isin(INNER_LONDON)].copy()
+
+# 5) Aggregate to annual mean AADF across Inner London (ALL links)
+annual = (
+    inner.groupby("year", as_index=False)
+         .agg(
+             mean_aadf=("all_motor_vehicles", "mean"),
+             median_aadf=("all_motor_vehicles", "median"),
+             n_links=("all_motor_vehicles", "count"),
+         )
+         .sort_values("year")
+)
+
+# 6) Restrict to study period
+annual = annual[(annual["year"] >= 2013) & (annual["year"] <= 2025)].copy()
+
+# 7) Save annual table
+annual.to_csv("inner_london_aadf_all_links_annual_2013_2025.csv", index=False)
+
+# 8) Plot (simple)
+plt.figure()
+plt.plot(annual["year"], annual["mean_aadf"])
+plt.xlabel("Year")
+plt.ylabel("Mean AADF (all motor vehicles)")
+plt.title("Inner London Traffic Intensity (AADF, annual mean) — ALL links")
+plt.tight_layout()
+plt.savefig("traffic_intensity_inner_london_all_links.png", dpi=200)
+plt.show()
+
+print("Saved:")
+print("- inner_london_aadf_all_links_annual_2013_2025.csv")
+print("- traffic_intensity_inner_london_all_links.png")

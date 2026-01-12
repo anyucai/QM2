@@ -136,3 +136,118 @@ plt.legend()
 plt.tight_layout()
 plt.savefig("london_annual_roadside_no2_pm25_2013_2025.png", dpi=200)
 plt.show()
+
+
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+
+tr = pd.read_csv("dft_aadf_region_id_6.csv")
+nit = pd.read_csv("Nitrogen.csv")
+pm  = pd.read_csv("Pm2.5 (2).csv")
+
+def parse_ukair_wide_to_yearly_mean(df, out_col_name):
+    first_col = df.columns[0]
+    header_idx = df.index[df[first_col].astype(str).str.strip().eq("Date")]
+    if len(header_idx) == 0:
+        raise ValueError("Cannot find header row 'Date'.")
+    header_i = header_idx[0]
+    site_i = 2
+
+    data = df.iloc[header_i+1:].copy()
+
+    sites = []
+    for j in range(1, df.shape[1], 2):
+        if j + 1 < df.shape[1]:
+            s = df.iloc[site_i, j]
+            sites.append(str(s) if (s is not None and str(s) != "nan") else f"Site_{len(sites)+1}")
+
+    cols = ["Date"]
+    for s in sites:
+        cols.append(s)
+        cols.append(f"{s}_status")
+
+    data = data.iloc[:, :len(cols)]
+    data.columns = cols
+
+    data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
+    data = data.dropna(subset=["Date"])
+    data["year"] = data["Date"].dt.year
+
+    site_cols = [c for c in data.columns if c not in ["Date", "year"] and not c.endswith("_status")]
+    for c in site_cols:
+        data[c] = pd.to_numeric(data[c], errors="coerce")
+
+    data["daily_mean_across_sites"] = data[site_cols].mean(axis=1, skipna=True)
+    yearly = (
+        data.groupby("year")["daily_mean_across_sites"]
+        .mean()
+        .reset_index()
+        .rename(columns={"daily_mean_across_sites": out_col_name})
+    )
+    return yearly
+
+no2_year  = parse_ukair_wide_to_yearly_mean(nit, "NO2_mean")
+pm25_year = parse_ukair_wide_to_yearly_mean(pm,  "PM25_mean")
+
+AADF_COL = "all_motor_vehicles"
+LEN_COL  = "link_length_km"  
+
+tr[AADF_COL] = pd.to_numeric(tr[AADF_COL], errors="coerce")
+tr[LEN_COL]  = pd.to_numeric(tr[LEN_COL], errors="coerce")
+
+tr_clean = tr.dropna(subset=["year", AADF_COL, LEN_COL]).copy()
+
+ti_mean = tr_clean.groupby("year")[AADF_COL].mean().reset_index().rename(columns={AADF_COL:"TI_mean"})
+
+def weighted_mean(g):
+    return np.sum(g[AADF_COL]*g[LEN_COL]) / np.sum(g[LEN_COL])
+
+ti_wmean = tr_clean.groupby("year").apply(weighted_mean).reset_index().rename(columns={0:"TI_weighted_mean"})
+
+ti_total = tr_clean.groupby("year").apply(lambda g: np.sum(g[AADF_COL]*g[LEN_COL])).reset_index().rename(columns={0:"TI_total_vkm_proxy"})
+
+ti = ti_mean.merge(ti_wmean, on="year").merge(ti_total, on="year")
+
+df_no2 = no2_year.merge(ti, on="year", how="inner").sort_values("year")
+df_pm  = pm25_year.merge(ti, on="year", how="inner").sort_values("year")
+
+
+def ols_and_plot(df, y_col, x_col, title):
+    d = df[["year", x_col, y_col]].dropna().copy()
+    if len(d) < 3:
+        print(f"{title}: not enough data, n={len(d)}")
+        return
+
+    X = sm.add_constant(d[x_col])
+    y = d[y_col]
+    model = sm.OLS(y, X).fit()
+
+    print("\n" + "="*90)
+    print(title)
+    print(model.summary())
+
+    plt.figure(figsize=(7,4.5))
+    plt.scatter(d[x_col], d[y_col])
+    for _, r in d.iterrows():
+        plt.annotate(int(r["year"]), (r[x_col], r[y_col]), fontsize=8,
+                     xytext=(4,4), textcoords="offset points")
+
+    xx = np.linspace(d[x_col].min(), d[x_col].max(), 100)
+    yy = model.params["const"] + model.params[x_col]*xx
+    plt.plot(xx, yy)
+
+    p = model.pvalues.get(x_col, np.nan)
+    plt.title(f"{title}\ncoef={model.params[x_col]:.4g}, p={p:.4g}, R²={model.rsquared:.3f}, n={len(d)}")
+    plt.xlabel(x_col)
+    plt.ylabel(y_col)
+    plt.tight_layout()
+    plt.show()
+
+XCOL = "TI_weighted_mean"  
+
+ols_and_plot(df_no2, "NO2_mean",  XCOL, f"OLS: NO2 ~ {XCOL}")
+ols_and_plot(df_pm,  "PM25_mean", XCOL, f"OLS: PM2.5 ~ {XCOL}")
